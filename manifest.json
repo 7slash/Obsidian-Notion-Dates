@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-notion-dates",
+	"name": "Obsidian Notion Dates",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Notion-style dynamic date pills in Obsidian. Type @today, @yesterday, @tomorrow, or @now and view beautiful dynamic date badges.",
+	"author": "Michael",
+	"authorUrl": "https://github.com",
+	"isDesktopOnly": false
+}

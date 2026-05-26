@@ -1,0 +1,198 @@
+/* ==========================================================================
+   Obsidian Notion Dates Stylesheet
+   ========================================================================== */
+
+/* Core Pill styling for both Live Preview and Reading View */
+.notion-date-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 6px;
+	margin: 0 2px;
+	border-radius: 4px;
+	font-size: 0.88em;
+	font-weight: 500;
+	cursor: pointer;
+	line-height: 1.2;
+	user-select: none;
+	text-decoration: none !important;
+	border: 1px solid transparent;
+	transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+/* Hover micro-interactions */
+.notion-date-pill:hover {
+	transform: translateY(-0.5px);
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+}
+
+.theme-light .notion-date-pill:hover {
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.06);
+}
+
+/* Theme Adaptive Color Highlights */
+
+/* 1. Today (Subtle Blue theme) */
+.theme-light .notion-date-today {
+	background-color: rgba(35, 131, 226, 0.08);
+	color: #1e70c2;
+	border-color: rgba(35, 131, 226, 0.15);
+}
+.theme-dark .notion-date-today {
+	background-color: rgba(35, 131, 226, 0.14);
+	color: #5aa5fa;
+	border-color: rgba(35, 131, 226, 0.28);
+}
+.theme-light .notion-date-today:hover {
+	background-color: rgba(35, 131, 226, 0.13);
+}
+.theme-dark .notion-date-today:hover {
+	background-color: rgba(35, 131, 226, 0.22);
+}
+
+/* 2. Past Dates (Subtle Grey theme) */
+.theme-light .notion-date-past {
+	background-color: rgba(55, 53, 47, 0.06);
+	color: #37352f;
+	border-color: rgba(55, 53, 47, 0.1);
+}
+.theme-dark .notion-date-past {
+	background-color: rgba(255, 255, 255, 0.08);
+	color: var(--text-muted);
+	border-color: rgba(255, 255, 255, 0.12);
+}
+.theme-light .notion-date-past:hover {
+	background-color: rgba(55, 53, 47, 0.1);
+}
+.theme-dark .notion-date-past:hover {
+	background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* 3. Future Dates (Subtle Green/Teal theme) */
+.theme-light .notion-date-future {
+	background-color: rgba(9, 149, 114, 0.08);
+	color: #0b8062;
+	border-color: rgba(9, 149, 114, 0.18);
+}
+.theme-dark .notion-date-future {
+	background-color: rgba(9, 149, 114, 0.14);
+	color: #3fcf8e;
+	border-color: rgba(9, 149, 114, 0.25);
+}
+.theme-light .notion-date-future:hover {
+	background-color: rgba(9, 149, 114, 0.14);
+}
+.theme-dark .notion-date-future:hover {
+	background-color: rgba(9, 149, 114, 0.22);
+}
+
+/* Autocomplete Suggestion List styling */
+.notion-date-suggestion-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	padding: 4px 6px;
+	font-family: var(--font-interface);
+}
+
+.suggestion-display {
+	font-weight: 500;
+	color: var(--text-normal);
+}
+
+.suggestion-hint {
+	font-size: 0.85em;
+	color: var(--text-muted);
+	margin-left: 10px;
+}
+
+/* Custom Date & Time Picker Modal styling */
+.notion-date-modal-title {
+	margin: 0 0 20px 0;
+	font-size: 1.3em;
+	font-weight: 600;
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding-bottom: 12px;
+	color: var(--text-normal);
+}
+
+.notion-date-modal-container {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	margin-bottom: 24px;
+}
+
+.notion-date-modal-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.notion-date-modal-row label {
+	font-size: 0.95em;
+	font-weight: 500;
+	color: var(--text-normal);
+	flex: 1;
+}
+
+.notion-date-modal-row input[type="date"],
+.notion-date-modal-row input[type="time"] {
+	flex: 2;
+	padding: 6px 10px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	font-family: var(--font-interface);
+	font-size: 14px;
+	outline: none;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.notion-date-modal-row input[type="date"]:focus,
+.notion-date-modal-row input[type="time"]:focus {
+	border-color: var(--text-accent);
+	box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.15);
+}
+
+.notion-date-modal-row.checkbox-row {
+	justify-content: flex-start;
+	margin: 4px 0;
+}
+
+.notion-date-modal-row.checkbox-row label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	user-select: none;
+	font-size: 0.95em;
+}
+
+.notion-date-modal-row.checkbox-row input[type="checkbox"] {
+	width: 15px;
+	height: 15px;
+	accent-color: var(--text-accent);
+	cursor: pointer;
+}
+
+.notion-date-modal-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+	margin-top: 16px;
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 16px;
+}
+
+.notion-date-modal-buttons button {
+	font-family: var(--font-interface);
+	font-weight: 500;
+	padding: 6px 14px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 0.92em;
+	transition: background-color 0.15s ease;
+}
