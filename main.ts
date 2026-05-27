@@ -775,6 +775,7 @@ interface NotionDateSuggestion {
  */
 class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 	private repositionQueued = false;
+	private pendingSuggestionEl: HTMLElement | null = null;
 
 	constructor(private plugin: NotionDatePlugin) {
 		super(plugin.app);
@@ -852,6 +853,7 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 	}
 
 	renderSuggestion(suggestion: NotionDateSuggestion, el: HTMLElement): void {
+		this.prepareSuggestionContainer(el);
 		this.scheduleRepositionAbove();
 		const container = el.createEl("div", { cls: "notion-date-suggestion-item" });
 		container.createEl("span", { text: suggestion.displayText, cls: "suggestion-display" });
@@ -860,39 +862,54 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 		}
 	}
 
+	private prepareSuggestionContainer(el: HTMLElement): void {
+		const suggestionEl = el.closest(".suggestion-container") as HTMLElement | null;
+		if (!suggestionEl) return;
+
+		this.pendingSuggestionEl = suggestionEl;
+		suggestionEl.classList.add("notion-date-suggestion-container", "notion-date-suggestion-positioning");
+	}
+
 	private scheduleRepositionAbove(): void {
 		if (this.repositionQueued) return;
 		this.repositionQueued = true;
 
 		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				this.repositionQueued = false;
-				this.repositionAboveIfSpace();
-			});
+			this.repositionQueued = false;
+			this.repositionAboveIfSpace();
 		});
 	}
 
 	private repositionAboveIfSpace(): void {
-		if (!this.context) return;
-
-		const editorView = (this.context.editor as unknown as { cm?: EditorView }).cm;
-		if (!editorView) return;
-
-		const offset = this.context.editor.posToOffset(this.context.start);
-		const cursorRect = editorView.coordsAtPos(offset);
-		if (!cursorRect) return;
-
-		const suggestionEl = Array.from(document.querySelectorAll<HTMLElement>(".suggestion-container"))
-			.find((el) => el.querySelector(".notion-date-suggestion-item"));
+		const suggestionEl = this.pendingSuggestionEl ?? this.getSuggestionContainer();
 		if (!suggestionEl) return;
 
-		const margin = 8;
-		const suggestionRect = suggestionEl.getBoundingClientRect();
-		const top = cursorRect.top - suggestionRect.height - margin;
-		if (top < margin) return;
+		try {
+			if (!this.context) return;
 
-		suggestionEl.style.top = `${top}px`;
-		suggestionEl.style.bottom = "auto";
+			const editorView = (this.context.editor as unknown as { cm?: EditorView }).cm;
+			if (!editorView) return;
+
+			const offset = this.context.editor.posToOffset(this.context.start);
+			const cursorRect = editorView.coordsAtPos(offset);
+			if (!cursorRect) return;
+
+			const margin = 8;
+			const suggestionRect = suggestionEl.getBoundingClientRect();
+			const top = cursorRect.top - suggestionRect.height - margin;
+			if (top < margin) return;
+
+			suggestionEl.style.top = `${top}px`;
+			suggestionEl.style.bottom = "auto";
+		} finally {
+			suggestionEl.classList.remove("notion-date-suggestion-positioning");
+			this.pendingSuggestionEl = null;
+		}
+	}
+
+	private getSuggestionContainer(): HTMLElement | null {
+		return Array.from(document.querySelectorAll<HTMLElement>(".suggestion-container"))
+			.find((el) => el.querySelector(".notion-date-suggestion-item")) ?? null;
 	}
 
 	selectSuggestion(suggestion: NotionDateSuggestion, evt: MouseEvent | KeyboardEvent): void {
