@@ -86,6 +86,15 @@
 }
 
 /* Autocomplete Suggestion List styling */
+.notion-date-suggestion-container {
+	transition: none !important;
+}
+
+.notion-date-suggestion-container.notion-date-suggestion-positioning {
+	opacity: 0;
+	pointer-events: none;
+}
+
 .notion-date-suggestion-item {
 	display: flex;
 	align-items: center;
