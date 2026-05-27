@@ -28,22 +28,27 @@ import {
 } from '@codemirror/state';
 
 // Global DATE_REGEX used throughout the plugin
-const DATE_REGEX = /@\[(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(?::\d{2})?)?\]/g;
+const DATE_REGEX = /@\[([^\]]+)\]/g;
 
 type DateFormatKey = "relative" | "short" | "medium" | "long" | "iso" | "numeric";
 type TimeFormatKey = "12-hour" | "24-hour";
 type WeekStartsOnKey = "sunday" | "monday";
+type MarkdownDateFormatKey = "iso" | "slash" | "us" | "long" | "custom";
 
 interface NotionDatePluginSettings {
 	dateFormat: DateFormatKey;
 	timeFormat: TimeFormatKey;
 	weekStartsOn: WeekStartsOnKey;
+	markdownDateFormat: MarkdownDateFormatKey;
+	customMarkdownDateFormat: string;
 }
 
 const DEFAULT_SETTINGS: NotionDatePluginSettings = {
 	dateFormat: "relative",
 	timeFormat: "12-hour",
-	weekStartsOn: "sunday"
+	weekStartsOn: "sunday",
+	markdownDateFormat: "iso",
+	customMarkdownDateFormat: "YYYY-MM-DD"
 };
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -86,6 +91,16 @@ interface ParsedSmartDate {
 	timeStr?: string;
 }
 
+interface ParsedDateTag {
+	dateStr: string;
+	timeStr?: string;
+}
+
+interface DateTokenPart {
+	token?: "YYYY" | "YY" | "MM" | "M" | "DD" | "D";
+	literal?: string;
+}
+
 function parseLocalDate(dateStr: string): Date {
 	const [year, month, day] = dateStr.split("-").map((part) => parseInt(part, 10));
 	return new Date(year, month - 1, day);
@@ -96,6 +111,109 @@ function formatDateValue(date: Date): string {
 	const month = String(date.getMonth() + 1).padStart(2, "0");
 	const day = String(date.getDate()).padStart(2, "0");
 	return `${year}-${month}-${day}`;
+}
+
+function getMarkdownDateFormatPattern(settings: NotionDatePluginSettings): string {
+	if (settings.markdownDateFormat === "slash") return "YYYY/MM/DD";
+	if (settings.markdownDateFormat === "us") return "MM/DD/YYYY";
+	if (settings.markdownDateFormat === "long") return "MMMM D, YYYY";
+	if (settings.markdownDateFormat === "custom") return settings.customMarkdownDateFormat || DEFAULT_SETTINGS.customMarkdownDateFormat;
+	return "YYYY-MM-DD";
+}
+
+function tokenizeDatePattern(pattern: string): DateTokenPart[] {
+	const parts: DateTokenPart[] = [];
+	const tokens: NonNullable<DateTokenPart["token"]>[] = ["YYYY", "YY", "MM", "M", "DD", "D"];
+	let index = 0;
+
+	while (index < pattern.length) {
+		const token = tokens.find((candidate) => pattern.slice(index, index + candidate.length) === candidate);
+		if (token) {
+			parts.push({ token });
+			index += token.length;
+		} else {
+			const literalStart = index;
+			index += 1;
+			while (index < pattern.length && !tokens.some((candidate) => pattern.slice(index, index + candidate.length) === candidate)) {
+				index += 1;
+			}
+			parts.push({ literal: pattern.slice(literalStart, index) });
+		}
+	}
+
+	return parts;
+}
+
+function formatDateWithPattern(date: Date, pattern: string): string {
+	const values: Record<NonNullable<DateTokenPart["token"]>, string> = {
+		YYYY: String(date.getFullYear()),
+		YY: String(date.getFullYear()).slice(-2),
+		MM: String(date.getMonth() + 1).padStart(2, "0"),
+		M: String(date.getMonth() + 1),
+		DD: String(date.getDate()).padStart(2, "0"),
+		D: String(date.getDate())
+	};
+
+	return tokenizeDatePattern(pattern)
+		.map((part) => part.token ? values[part.token] : part.literal)
+		.join("");
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseDateWithPattern(value: string, pattern: string): Date | null {
+	const parts = tokenizeDatePattern(pattern);
+	const seenTokens = new Set<string>();
+	let regexSource = "^";
+
+	for (const part of parts) {
+		if (part.literal !== undefined) {
+			regexSource += escapeRegExp(part.literal);
+			continue;
+		}
+
+		if (!part.token || seenTokens.has(part.token)) return null;
+		seenTokens.add(part.token);
+
+		if (part.token === "YYYY") regexSource += `(?<${part.token}>\\d{4})`;
+		if (part.token === "YY") regexSource += `(?<${part.token}>\\d{2})`;
+		if (part.token === "MM" || part.token === "DD") regexSource += `(?<${part.token}>\\d{2})`;
+		if (part.token === "M" || part.token === "D") regexSource += `(?<${part.token}>\\d{1,2})`;
+	}
+
+	regexSource += "$";
+	const match = value.match(new RegExp(regexSource));
+	if (!match?.groups) return null;
+
+	const yearValue = match.groups.YYYY ?? match.groups.YY;
+	const monthValue = match.groups.MM ?? match.groups.M;
+	const dayValue = match.groups.DD ?? match.groups.D;
+	if (!yearValue || !monthValue || !dayValue) return null;
+
+	const year = yearValue.length === 2 ? 2000 + parseInt(yearValue, 10) : parseInt(yearValue, 10);
+	const month = parseInt(monthValue, 10);
+	const day = parseInt(dayValue, 10);
+	const date = new Date(year, month - 1, day);
+
+	if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+		return null;
+	}
+
+	return date;
+}
+
+function formatMarkdownDateValue(date: Date, settings: NotionDatePluginSettings): string {
+	if (settings.markdownDateFormat === "long") {
+		return date.toLocaleDateString(undefined, {
+			month: "long",
+			day: "numeric",
+			year: "numeric"
+		});
+	}
+
+	return formatDateWithPattern(date, getMarkdownDateFormatPattern(settings));
 }
 
 function startOfToday(): Date {
@@ -329,6 +447,17 @@ function parseSmartDate(input: string, baseDate = new Date()): ParsedSmartDate |
 		}
 	}
 
+	const slashIsoMatch = text.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+	if (slashIsoMatch) {
+		const year = parseInt(slashIsoMatch[1], 10);
+		const month = parseInt(slashIsoMatch[2], 10);
+		const day = parseInt(slashIsoMatch[3], 10);
+		const date = new Date(year, month - 1, day);
+		if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) {
+			return { date, timeStr };
+		}
+	}
+
 	const numericMatch = text.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
 	if (numericMatch) {
 		const month = parseInt(numericMatch[1], 10);
@@ -405,6 +534,100 @@ function formatParsedValue(parsed: ParsedSmartDate): string {
 	return parsed.timeStr ? `${dateValue} ${parsed.timeStr}` : dateValue;
 }
 
+function formatMarkdownDateTagContent(parsed: ParsedSmartDate, settings: NotionDatePluginSettings): string {
+	const dateValue = formatMarkdownDateValue(parsed.date, settings);
+	return parsed.timeStr ? `${dateValue} ${parsed.timeStr}` : dateValue;
+}
+
+function formatMarkdownDateTagFromValue(value: string, settings: NotionDatePluginSettings): string {
+	const parsed = parseSmartDate(value);
+	if (!parsed) return value;
+	return formatMarkdownDateTagContent(parsed, settings);
+}
+
+function parseDateTagContent(content: string, settings?: NotionDatePluginSettings): ParsedDateTag | null {
+	if (settings?.markdownDateFormat === "custom") {
+		const { dateText, timeStr } = extractTime(normalizeSmartDateInput(content));
+		const date = parseDateWithPattern(dateText, getMarkdownDateFormatPattern(settings));
+		if (date) {
+			return {
+				dateStr: formatDateValue(date),
+				timeStr
+			};
+		}
+	}
+
+	const parsed = parseSmartDate(content);
+	if (!parsed) return null;
+	return {
+		dateStr: formatDateValue(parsed.date),
+		timeStr: parsed.timeStr
+	};
+}
+
+function createDateSuggestion(label: string, parsed: ParsedSmartDate, settings: NotionDatePluginSettings, searchText?: string): NotionDateSuggestion {
+	return {
+		label,
+		value: formatParsedValue(parsed),
+		displayText: getDateDisplayString(formatDateValue(parsed.date), parsed.timeStr, settings),
+		searchText: searchText ?? label
+	};
+}
+
+function getPartialSmartDateSuggestions(query: string, baseDate: Date, settings: NotionDatePluginSettings): NotionDateSuggestion[] {
+	const suggestions: NotionDateSuggestion[] = [];
+
+	const weekdayMatch = query.match(/^(?:(next|this|last)\s+)?([a-z]{1,})$/);
+	if (weekdayMatch) {
+		const modifier = weekdayMatch[1];
+		const weekdayPrefix = weekdayMatch[2];
+		const weekdayMatches = WEEKDAYS.filter((weekday) => weekday.toLowerCase().startsWith(weekdayPrefix));
+		for (const weekday of weekdayMatches) {
+			const label = modifier ? `${modifier} ${weekday.toLowerCase()}` : weekday.toLowerCase();
+			const parsed = parseSmartDate(label, baseDate);
+			if (parsed) {
+				suggestions.push(createDateSuggestion(label, parsed, settings, `${weekday.toLowerCase()} ${label}`));
+			}
+		}
+	}
+
+	const monthDayMatch = query.match(/^([a-z]{1,})(?:\s+(\d{1,2}))?$/);
+	if (monthDayMatch) {
+		const monthPrefix = monthDayMatch[1];
+		const dayText = monthDayMatch[2];
+		const monthNames = Object.keys(MONTHS)
+			.filter((monthName) => monthName.length > 3 && monthName.startsWith(monthPrefix))
+			.filter((monthName, index, matches) => matches.indexOf(monthName) === index);
+
+		if (dayText) {
+			const day = parseInt(dayText, 10);
+			for (const monthName of monthNames) {
+				if (day < 1 || day > 31) continue;
+				const parsed = parseSmartDate(`${monthName} ${day}`, baseDate);
+				if (parsed) {
+					suggestions.push(createDateSuggestion(`${monthName} ${day}`, parsed, settings, `${monthName} ${day}`));
+				}
+			}
+		}
+	}
+
+	return suggestions;
+}
+
+function dedupeSuggestions(suggestions: NotionDateSuggestion[]): NotionDateSuggestion[] {
+	const seen = new Set<string>();
+	const deduped: NotionDateSuggestion[] = [];
+
+	for (const suggestion of suggestions) {
+		const key = `${suggestion.value}|${suggestion.displayText}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		deduped.push(suggestion);
+	}
+
+	return deduped;
+}
+
 /**
  * Custom Date and Time Picker Modal using standard HTML5 inputs.
  */
@@ -423,11 +646,11 @@ export class CustomDatePickerModal extends Modal {
 		this.hasTime = false;
 
 		if (initialVal) {
-			const match = initialVal.match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/);
-			if (match) {
-				this.initialDate = match[1];
-				if (match[2]) {
-					this.initialTime = match[2];
+			const parsed = parseDateTagContent(initialVal);
+			if (parsed) {
+				this.initialDate = parsed.dateStr;
+				if (parsed.timeStr) {
+					this.initialTime = parsed.timeStr;
 					this.hasTime = true;
 				}
 			}
@@ -551,6 +774,8 @@ interface NotionDateSuggestion {
  * Autocomplete editor suggestions popover when typing "@".
  */
 class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
+	private repositionQueued = false;
+
 	constructor(private plugin: NotionDatePlugin) {
 		super(plugin.app);
 	}
@@ -590,48 +815,84 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 		const minutes = String(now.getMinutes()).padStart(2, "0");
 		const nowStr = `${todayStr} ${hours}:${minutes}`;
 
+		const pinnedCustomOption: NotionDateSuggestion = { label: "date", value: "custom", displayText: "@Choose date..." };
 		const options: NotionDateSuggestion[] = [
 			{ label: "today", value: todayStr, displayText: "@Today", searchText: "today" },
 			{ label: "yesterday", value: yesterdayStr, displayText: "@Yesterday", searchText: "yesterday" },
 			{ label: "tomorrow", value: tomorrowStr, displayText: "@Tomorrow", searchText: "tomorrow" },
-			{ label: "now", value: nowStr, displayText: "@Now (Date & Time)", searchText: "now" },
-			{ label: "date", value: "custom", displayText: "@Choose date..." }
+			{ label: "now", value: nowStr, displayText: "@Now (Date & Time)", searchText: "now" }
 		];
 
 		for (const weekday of WEEKDAYS) {
 			const parsed = parseSmartDate(`next ${weekday}`, now);
 			if (!parsed) continue;
-			const value = formatParsedValue(parsed);
-			options.push({
-				label: `next ${weekday.toLowerCase()}`,
-				value,
-				displayText: getDateDisplayString(formatDateValue(parsed.date), parsed.timeStr, this.plugin.settings),
-				searchText: `${weekday.toLowerCase()} next ${weekday.toLowerCase()}`
-			});
+			const label = `next ${weekday.toLowerCase()}`;
+			options.push(createDateSuggestion(label, parsed, this.plugin.settings, `${weekday.toLowerCase()} ${label}`));
 		}
+
+		const matchingSuggestions = options.filter((opt) => (opt.searchText ?? opt.label).includes(query));
+		const smartSuggestions: NotionDateSuggestion[] = [];
 
 		if (query) {
 			const parsed = parseSmartDate(query, now);
 			if (parsed) {
-				const value = formatParsedValue(parsed);
-				return [{
-					label: query,
-					value,
-					displayText: getDateDisplayString(formatDateValue(parsed.date), parsed.timeStr, this.plugin.settings),
-					searchText: query
-				}];
+				smartSuggestions.push(createDateSuggestion(query, parsed, this.plugin.settings));
 			}
+
+			smartSuggestions.push(...getPartialSmartDateSuggestions(query, now, this.plugin.settings));
 		}
 
-		return options.filter((opt) => (opt.searchText ?? opt.label).includes(query));
+		return [
+			pinnedCustomOption,
+			...dedupeSuggestions([
+				...smartSuggestions,
+				...matchingSuggestions
+			])
+		];
 	}
 
 	renderSuggestion(suggestion: NotionDateSuggestion, el: HTMLElement): void {
+		this.scheduleRepositionAbove();
 		const container = el.createEl("div", { cls: "notion-date-suggestion-item" });
 		container.createEl("span", { text: suggestion.displayText, cls: "suggestion-display" });
 		if (suggestion.value !== "custom") {
 			container.createEl("span", { text: ` (${suggestion.value})`, cls: "suggestion-hint" });
 		}
+	}
+
+	private scheduleRepositionAbove(): void {
+		if (this.repositionQueued) return;
+		this.repositionQueued = true;
+
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				this.repositionQueued = false;
+				this.repositionAboveIfSpace();
+			});
+		});
+	}
+
+	private repositionAboveIfSpace(): void {
+		if (!this.context) return;
+
+		const editorView = (this.context.editor as unknown as { cm?: EditorView }).cm;
+		if (!editorView) return;
+
+		const offset = this.context.editor.posToOffset(this.context.start);
+		const cursorRect = editorView.coordsAtPos(offset);
+		if (!cursorRect) return;
+
+		const suggestionEl = Array.from(document.querySelectorAll<HTMLElement>(".suggestion-container"))
+			.find((el) => el.querySelector(".notion-date-suggestion-item"));
+		if (!suggestionEl) return;
+
+		const margin = 8;
+		const suggestionRect = suggestionEl.getBoundingClientRect();
+		const top = cursorRect.top - suggestionRect.height - margin;
+		if (top < margin) return;
+
+		suggestionEl.style.top = `${top}px`;
+		suggestionEl.style.bottom = "auto";
 	}
 
 	selectSuggestion(suggestion: NotionDateSuggestion, evt: MouseEvent | KeyboardEvent): void {
@@ -645,12 +906,12 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 
 		if (suggestion.value === "custom") {
 			new CustomDatePickerModal(this.app, (dateVal) => {
-				const insertedText = `@[${dateVal}]`;
+				const insertedText = `@[${formatMarkdownDateTagFromValue(dateVal, this.plugin.settings)}]`;
 				editor.replaceRange(insertedText, start);
 				editor.setCursor({ line: start.line, ch: start.ch + insertedText.length });
 			}).open();
 		} else {
-			const insertedText = `@[${suggestion.value}]`;
+			const insertedText = `@[${formatMarkdownDateTagFromValue(suggestion.value, this.plugin.settings)}]`;
 			editor.replaceRange(insertedText, start);
 			editor.setCursor({ line: start.line, ch: start.ch + insertedText.length });
 		}
@@ -735,11 +996,14 @@ function buildDecorations(
 	const text = state.doc.toString();
 	const selection = state.selection;
 
-	// Search for `@[YYYY-MM-DD]` or `@[YYYY-MM-DD HH:mm]`
-	const regex = /@\[(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(?::\d{2})?)?\]/g;
+	// Search for parseable date tags such as `@[YYYY-MM-DD]`, `@[May 29, 2026]`, or `@[05/29/2026 14:30]`.
+	const regex = new RegExp(DATE_REGEX);
 	let match;
 
 	while ((match = regex.exec(text)) !== null) {
+		const parsedTag = parseDateTagContent(match[1], settings);
+		if (!parsedTag) continue;
+
 		const start = match.index;
 		const end = start + match[0].length;
 
@@ -758,8 +1022,8 @@ function buildDecorations(
 		}
 
 		if (!isCursorOverlapping) {
-			const dateStr = match[1];
-			const timeStr = match[2];
+			const dateStr = parsedTag.dateStr;
+			const timeStr = parsedTag.timeStr;
 			const rawText = match[0];
 
 			const deco = Decoration.replace({
@@ -819,13 +1083,17 @@ export default class NotionDatePlugin extends Plugin {
 			if (!activeView) return;
 
 			const innerVal = rawText.slice(2, -1); // Extract content inside `@[` and `]`
+			const parsedInnerVal = parseDateTagContent(innerVal, this.settings);
+			const modalInitialVal = parsedInnerVal
+				? `${parsedInnerVal.dateStr}${parsedInnerVal.timeStr ? " " + parsedInnerVal.timeStr : ""}`
+				: innerVal;
 
 			new CustomDatePickerModal(this.app, (newVal) => {
 				const editor = activeView.editor;
 				const startPos = editor.offsetToPos(from);
 				const endPos = editor.offsetToPos(to);
-				editor.replaceRange(`@[${newVal}]`, startPos, endPos);
-			}, innerVal).open();
+				editor.replaceRange(`@[${formatMarkdownDateTagFromValue(newVal, this.settings)}]`, startPos, endPos);
+			}, modalInitialVal).open();
 		};
 
 		this.registerEditorExtension([createNotionDateExtension(this.app, () => this.settings, onWidgetClick)]);
@@ -836,7 +1104,7 @@ export default class NotionDatePlugin extends Plugin {
 			const nodesToReplace: { node: Text; parent: Node; newNodes: Node[] }[] = [];
 
 			let textNode: Text | null;
-			const regex = /@\[(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(?::\d{2})?)?\]/g;
+			const regex = new RegExp(DATE_REGEX);
 
 			while ((textNode = walker.nextNode() as Text | null)) {
 				const text = textNode.nodeValue;
@@ -850,6 +1118,9 @@ export default class NotionDatePlugin extends Plugin {
 					const newNodes: Node[] = [];
 
 					while ((match = regex.exec(text)) !== null) {
+						const parsedTag = parseDateTagContent(match[1], this.settings);
+						if (!parsedTag) continue;
+
 						const matchStart = match.index;
 						const matchEnd = matchStart + match[0].length;
 
@@ -858,8 +1129,8 @@ export default class NotionDatePlugin extends Plugin {
 							newNodes.push(document.createTextNode(text.substring(lastIdx, matchStart)));
 						}
 
-						const dateStr = match[1];
-						const timeStr = match[2];
+						const dateStr = parsedTag.dateStr;
+						const timeStr = parsedTag.timeStr;
 						const rawText = match[0];
 
 						// Create styled HTML span pill
@@ -885,18 +1156,22 @@ export default class NotionDatePlugin extends Plugin {
 							evt.preventDefault();
 							evt.stopPropagation();
 
-							const innerVal = rawText.slice(2, -1);
-							new CustomDatePickerModal(this.app, (newVal) => {
-								const activeFile = this.app.workspace.getActiveFile();
-								if (activeFile) {
-									this.app.vault.read(activeFile).then((fileContent) => {
-										// Replace target raw text tag in file contents
-										const updatedContent = fileContent.replace(rawText, `@[${newVal}]`);
-										this.app.vault.modify(activeFile, updatedContent);
-									});
-								}
-							}, innerVal).open();
-						});
+								const innerVal = rawText.slice(2, -1);
+								const parsedInnerVal = parseDateTagContent(innerVal, this.settings);
+								const modalInitialVal = parsedInnerVal
+									? `${parsedInnerVal.dateStr}${parsedInnerVal.timeStr ? " " + parsedInnerVal.timeStr : ""}`
+									: innerVal;
+								new CustomDatePickerModal(this.app, (newVal) => {
+									const activeFile = this.app.workspace.getActiveFile();
+									if (activeFile) {
+										this.app.vault.read(activeFile).then((fileContent) => {
+											// Replace target raw text tag in file contents
+											const updatedContent = fileContent.replace(rawText, `@[${formatMarkdownDateTagFromValue(newVal, this.settings)}]`);
+											this.app.vault.modify(activeFile, updatedContent);
+										});
+									}
+								}, modalInitialVal).open();
+							});
 
 						newNodes.push(span);
 						lastIdx = matchEnd;
@@ -989,6 +1264,34 @@ class NotionDateSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.timeFormat)
 				.onChange(async (value) => {
 					this.plugin.settings.timeFormat = value as TimeFormatKey;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Markdown date format")
+			.setDesc("Controls the date format written inside date tags. ISO is the most portable default.")
+			.addDropdown((dropdown) => dropdown
+				.addOption("iso", "YYYY-MM-DD")
+				.addOption("slash", "YYYY/MM/DD")
+				.addOption("us", "MM/DD/YYYY")
+				.addOption("long", "Month D, YYYY")
+				.addOption("custom", "Custom")
+				.setValue(this.plugin.settings.markdownDateFormat)
+				.onChange(async (value) => {
+					this.plugin.settings.markdownDateFormat = value as MarkdownDateFormatKey;
+					await this.plugin.saveSettings();
+					this.display();
+				}));
+
+		new Setting(containerEl)
+			.setName("Custom markdown format")
+			.setDesc("Use YYYY, YY, MM, M, DD, and D tokens. Example: YYYY-DD-MM.")
+			.addText((text) => text
+				.setPlaceholder("YYYY-MM-DD")
+				.setValue(this.plugin.settings.customMarkdownDateFormat)
+				.setDisabled(this.plugin.settings.markdownDateFormat !== "custom")
+				.onChange(async (value) => {
+					this.plugin.settings.customMarkdownDateFormat = value.trim() || DEFAULT_SETTINGS.customMarkdownDateFormat;
 					await this.plugin.saveSettings();
 				}));
 
