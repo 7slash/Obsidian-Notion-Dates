@@ -1,6 +1,6 @@
 {
   "name": "obsidian-notion-dates",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Notion-style dynamic date pills in Obsidian with smart date insertion and configurable date formats.",
   "main": "main.js",
   "type": "module",
