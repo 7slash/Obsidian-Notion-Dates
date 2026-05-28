@@ -83,6 +83,21 @@ const MONTHS: Record<string, number> = {
 	december: 11
 };
 
+const FULL_MONTH_NAMES = [
+	"january",
+	"february",
+	"march",
+	"april",
+	"may",
+	"june",
+	"july",
+	"august",
+	"september",
+	"october",
+	"november",
+	"december"
+];
+
 const WEEKDAY_INDEX: Record<string, number> = WEEKDAYS.reduce((acc, weekday, index) => {
 	acc[weekday.toLowerCase()] = index;
 	acc[weekday.slice(0, 3).toLowerCase()] = index;
@@ -624,9 +639,7 @@ function getPartialSmartDateSuggestions(query: string, baseDate: Date, settings:
 	if (monthDayMatch) {
 		const monthPrefix = monthDayMatch[1];
 		const dayText = monthDayMatch[2];
-		const monthNames = Object.keys(MONTHS)
-			.filter((monthName) => monthName.length > 3 && monthName.startsWith(monthPrefix))
-			.filter((monthName, index, matches) => matches.indexOf(monthName) === index);
+		const monthNames = FULL_MONTH_NAMES.filter((monthName) => monthName.startsWith(monthPrefix));
 
 		if (dayText) {
 			const day = parseInt(dayText, 10);
@@ -635,6 +648,13 @@ function getPartialSmartDateSuggestions(query: string, baseDate: Date, settings:
 				const parsed = parseSmartDate(`${monthName} ${day}`, baseDate);
 				if (parsed) {
 					suggestions.push(createDateSuggestion(`${monthName} ${day}`, parsed, settings, `${monthName} ${day}`));
+				}
+			}
+		} else {
+			for (const monthName of monthNames) {
+				const parsed = parseSmartDate(`${monthName} 1`, baseDate);
+				if (parsed) {
+					suggestions.push(createDateSuggestion(`${monthName} 1`, parsed, settings, `${monthName} ${monthPrefix}`));
 				}
 			}
 		}
@@ -865,6 +885,7 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 
 	constructor(private plugin: NotionDatePlugin) {
 		super(plugin.app);
+		this.scope.register([], "Enter", (evt) => this.selectDefaultSuggestion(evt));
 	}
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
@@ -929,19 +950,30 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 			smartSuggestions.push(...getPartialSmartDateSuggestions(query, now, this.plugin.settings));
 		}
 
+		const dateSuggestions = dedupeSuggestions([
+			...smartSuggestions,
+			...matchingSuggestions
+		]);
+
+		if (query && dateSuggestions.length > 0) {
+			return [
+				...dateSuggestions,
+				pinnedCustomOption
+			];
+		}
+
 		return [
 			pinnedCustomOption,
-			...dedupeSuggestions([
-				...smartSuggestions,
-				...matchingSuggestions
-			])
+			...dateSuggestions
 		];
 	}
 
 	renderSuggestion(suggestion: NotionDateSuggestion, el: HTMLElement): void {
 		this.prepareSuggestionContainer(el);
 		this.scheduleRepositionAbove();
-		const container = el.createEl("div", { cls: "notion-date-suggestion-item" });
+		const container = el.createEl("div", {
+			cls: `notion-date-suggestion-item${suggestion.value === "custom" ? " notion-date-suggestion-custom" : ""}`
+		});
 		container.createEl("span", { text: suggestion.displayText, cls: "suggestion-display" });
 		if (suggestion.value !== "custom") {
 			container.createEl("span", { text: ` (${suggestion.value})`, cls: "suggestion-hint" });
@@ -954,6 +986,15 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 
 		this.pendingSuggestionEl = suggestionEl;
 		suggestionEl.classList.add("notion-date-suggestion-container", "notion-date-suggestion-positioning");
+	}
+
+	private pinCustomSuggestionToTop(suggestionEl: HTMLElement): void {
+		const customItem = Array.from(suggestionEl.querySelectorAll<HTMLElement>(".suggestion-item"))
+			.find((item) => item.querySelector(".notion-date-suggestion-custom"));
+		const parent = customItem?.parentElement;
+		if (!customItem || !parent || parent.firstElementChild === customItem) return;
+
+		parent.insertBefore(customItem, parent.firstElementChild);
 	}
 
 	private scheduleRepositionAbove(): void {
@@ -988,7 +1029,9 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 			suggestionEl.style.top = `${top}px`;
 			suggestionEl.style.bottom = "auto";
 		} finally {
+			this.pinCustomSuggestionToTop(suggestionEl);
 			suggestionEl.classList.remove("notion-date-suggestion-positioning");
+			this.updateDefaultSelection(suggestionEl);
 			this.pendingSuggestionEl = null;
 		}
 	}
@@ -996,6 +1039,38 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 	private getSuggestionContainer(): HTMLElement | null {
 		return Array.from(document.querySelectorAll<HTMLElement>(".suggestion-container"))
 			.find((el) => el.querySelector(".notion-date-suggestion-item")) ?? null;
+	}
+
+	private getDefaultSuggestion(): NotionDateSuggestion | null {
+		if (!this.context) return null;
+
+		const query = normalizeSmartDateInput(this.context.query);
+		if (!query) return null;
+
+		return this.getSuggestions(this.context).find((suggestion) => suggestion.value !== "custom") ?? null;
+	}
+
+	private selectDefaultSuggestion(evt: KeyboardEvent): false | void {
+		const suggestion = this.getDefaultSuggestion();
+		if (!suggestion) return;
+
+		evt.preventDefault();
+		evt.stopPropagation();
+		this.selectSuggestion(suggestion, evt);
+		return false;
+	}
+
+	private updateDefaultSelection(suggestionEl: HTMLElement): void {
+		if (!this.getDefaultSuggestion()) return;
+
+		const items = Array.from(suggestionEl.querySelectorAll<HTMLElement>(".suggestion-item"));
+		const defaultItem = items.find((item) => item.querySelector(".notion-date-suggestion-item:not(.notion-date-suggestion-custom)"));
+		if (!defaultItem) return;
+
+		for (const item of items) {
+			item.classList.remove("is-selected");
+		}
+		defaultItem.classList.add("is-selected");
 	}
 
 	selectSuggestion(suggestion: NotionDateSuggestion, evt: MouseEvent | KeyboardEvent): void {
