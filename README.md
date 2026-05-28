@@ -1,4 +1,4 @@
-# Obsidian Notion Dates
+# Notion Dates
 
 Notion-style date pills for Obsidian. Type natural language date mentions like `@today`, `@next wednesday`, or `@may 29`, and the plugin stores them as editable markdown tags while rendering them as compact date pills.
 
@@ -51,7 +51,7 @@ Those tags render as pills, such as `@Today`, `@Next Wednesday`, or `@May 29, 20
 
 ## Settings
 
-Open Obsidian Settings, then go to **Community plugins > Obsidian Notion Dates**.
+Open Obsidian Settings, then go to **Community plugins > Notion Dates**.
 
 ### Date Label Format
 
@@ -121,7 +121,7 @@ For local installation:
 ```
 
 3. Reload Obsidian.
-4. Enable **Obsidian Notion Dates** in Community Plugins.
+4. Enable **Notion Dates** in Community Plugins.
 
 ## Development
 
