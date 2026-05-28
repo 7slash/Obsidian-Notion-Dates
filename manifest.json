@@ -1,10 +1,10 @@
 {
 	"id": "obsidian-notion-dates",
 	"name": "Obsidian Notion Dates",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
+	"version": "1.1.0",
+	"minAppVersion": "1.1.0",
 	"description": "Notion-style dynamic date pills in Obsidian with smart date insertion and configurable date formats.",
-	"author": "Michael",
+	"author": "7slash",
 	"authorUrl": "https://github.com",
 	"isDesktopOnly": false
 }
