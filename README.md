@@ -2,6 +2,9 @@
 
 Notion-style date pills for Obsidian. Type natural language date mentions like `@today`, `@next wednesday`, or `@may 29`, and the plugin stores them as editable markdown tags while rendering them as compact date pills.
 
+<img width="462" height="430" alt="image" src="https://github.com/user-attachments/assets/6baed16c-ddb6-4cef-900a-33c6a39ef9b2" />
+
+
 ## Features
 
 - Inline date pills in Live Preview and Reading View.
