@@ -113,6 +113,18 @@ function formatDateValue(date: Date): string {
 	return `${year}-${month}-${day}`;
 }
 
+function getLocalDateKey(): string {
+	return formatDateValue(new Date());
+}
+
+function getDelayUntilNextLocalDay(): number {
+	const now = new Date();
+	const nextDay = new Date(now);
+	nextDay.setDate(now.getDate() + 1);
+	nextDay.setHours(0, 0, 1, 0);
+	return Math.max(1000, nextDay.getTime() - now.getTime());
+}
+
 function getMarkdownDateFormatPattern(settings: NotionDatePluginSettings): string {
 	if (settings.markdownDateFormat === "slash") return "YYYY/MM/DD";
 	if (settings.markdownDateFormat === "us") return "MM/DD/YYYY";
@@ -1085,6 +1097,8 @@ function createNotionDateExtension(
  */
 export default class NotionDatePlugin extends Plugin {
 	settings: NotionDatePluginSettings = { ...DEFAULT_SETTINGS };
+	private currentDateKey = getLocalDateKey();
+	private nextDayTimeout: number | null = null;
 
 	async onload() {
 		console.log("Loading Obsidian Notion Dates plugin...");
@@ -1218,6 +1232,8 @@ export default class NotionDatePlugin extends Plugin {
 				}
 			}
 		});
+
+		this.registerDateRolloverRefresh();
 	}
 
 	onunload() {
@@ -1233,6 +1249,41 @@ export default class NotionDatePlugin extends Plugin {
 		this.refreshDateWidgets();
 	}
 
+	private registerDateRolloverRefresh() {
+		this.scheduleNextDayRefresh();
+		this.registerDomEvent(window, "focus", () => this.refreshIfLocalDateChanged());
+		this.registerDomEvent(document, "visibilitychange", () => {
+			if (!document.hidden) {
+				this.refreshIfLocalDateChanged();
+			}
+		});
+		this.register(() => {
+			if (this.nextDayTimeout !== null) {
+				window.clearTimeout(this.nextDayTimeout);
+				this.nextDayTimeout = null;
+			}
+		});
+	}
+
+	private scheduleNextDayRefresh() {
+		if (this.nextDayTimeout !== null) {
+			window.clearTimeout(this.nextDayTimeout);
+		}
+
+		this.nextDayTimeout = window.setTimeout(() => {
+			this.refreshIfLocalDateChanged(true);
+			this.scheduleNextDayRefresh();
+		}, getDelayUntilNextLocalDay());
+	}
+
+	private refreshIfLocalDateChanged(force = false) {
+		const nextDateKey = getLocalDateKey();
+		if (!force && nextDateKey === this.currentDateKey) return;
+
+		this.currentDateKey = nextDateKey;
+		this.refreshDateWidgets();
+	}
+
 	refreshDateWidgets() {
 		this.app.workspace.iterateAllLeaves((leaf) => {
 			if (leaf.view instanceof MarkdownView) {
@@ -1240,6 +1291,9 @@ export default class NotionDatePlugin extends Plugin {
 				if (cm) {
 					cm.dispatch({ selection: cm.state.selection });
 				}
+
+				const previewMode = (leaf.view as unknown as { previewMode?: { rerender: (force?: boolean) => void } }).previewMode;
+				previewMode?.rerender(true);
 			}
 		});
 	}
