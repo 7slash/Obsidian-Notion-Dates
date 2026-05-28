@@ -1,7 +1,7 @@
 {
   "name": "obsidian-notion-dates",
-  "version": "1.0.0",
-  "description": "Notion-style dynamic date pills in Obsidian.",
+  "version": "1.1.0",
+  "description": "Notion-style dynamic date pills in Obsidian with smart date insertion and configurable date formats.",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
   },
   "keywords": ["obsidian", "plugin", "dates", "notion"],
-  "author": "Michael",
+  "author": "7slash",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.26",

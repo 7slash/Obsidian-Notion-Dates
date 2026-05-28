@@ -10,7 +10,8 @@ import {
 	EditorSuggestContext,
 	EditorSuggestTriggerInfo,
 	EditorPosition,
-	TFile
+	TFile,
+	MarkdownSectionInformation
 } from 'obsidian';
 
 import {
@@ -23,12 +24,14 @@ import {
 import {
 	EditorState,
 	Range,
+	StateEffect,
 	StateField,
 	Transaction
 } from '@codemirror/state';
 
 // Global DATE_REGEX used throughout the plugin
 const DATE_REGEX = /@\[([^\]]+)\]/g;
+const refreshDateDecorationsEffect = StateEffect.define<void>();
 
 type DateFormatKey = "relative" | "short" | "medium" | "long" | "iso" | "numeric";
 type TimeFormatKey = "12-hour" | "24-hour";
@@ -129,7 +132,10 @@ function getMarkdownDateFormatPattern(settings: NotionDatePluginSettings): strin
 	if (settings.markdownDateFormat === "slash") return "YYYY/MM/DD";
 	if (settings.markdownDateFormat === "us") return "MM/DD/YYYY";
 	if (settings.markdownDateFormat === "long") return "MMMM D, YYYY";
-	if (settings.markdownDateFormat === "custom") return settings.customMarkdownDateFormat || DEFAULT_SETTINGS.customMarkdownDateFormat;
+	if (settings.markdownDateFormat === "custom") {
+		const customPattern = settings.customMarkdownDateFormat || DEFAULT_SETTINGS.customMarkdownDateFormat;
+		return isValidDatePattern(customPattern) ? customPattern : DEFAULT_SETTINGS.customMarkdownDateFormat;
+	}
 	return "YYYY-MM-DD";
 }
 
@@ -214,6 +220,17 @@ function parseDateWithPattern(value: string, pattern: string): Date | null {
 	}
 
 	return date;
+}
+
+function isValidDatePattern(pattern: string): boolean {
+	const parts = tokenizeDatePattern(pattern);
+	const tokens = parts.map((part) => part.token).filter(Boolean);
+	const hasYear = tokens.includes("YYYY") || tokens.includes("YY");
+	const hasMonth = tokens.includes("MM") || tokens.includes("M");
+	const hasDay = tokens.includes("DD") || tokens.includes("D");
+	const uniqueTokens = new Set(tokens);
+
+	return hasYear && hasMonth && hasDay && uniqueTokens.size === tokens.length;
 }
 
 function formatMarkdownDateValue(date: Date, settings: NotionDatePluginSettings): string {
@@ -638,6 +655,63 @@ function dedupeSuggestions(suggestions: NotionDateSuggestion[]): NotionDateSugge
 	}
 
 	return deduped;
+}
+
+function getLineStartOffset(content: string, line: number): number {
+	if (line <= 0) return 0;
+
+	let offset = 0;
+	let currentLine = 0;
+	while (currentLine < line) {
+		const nextLineBreak = content.indexOf("\n", offset);
+		if (nextLineBreak === -1) return content.length;
+		offset = nextLineBreak + 1;
+		currentLine += 1;
+	}
+
+	return offset;
+}
+
+function replaceNthOccurrence(text: string, search: string, replacement: string, occurrenceIndex: number): string | null {
+	let fromIndex = 0;
+	let seen = 0;
+
+	while (fromIndex <= text.length) {
+		const index = text.indexOf(search, fromIndex);
+		if (index === -1) return null;
+
+		if (seen === occurrenceIndex) {
+			return text.slice(0, index) + replacement + text.slice(index + search.length);
+		}
+
+		seen += 1;
+		fromIndex = index + search.length;
+	}
+
+	return null;
+}
+
+function replaceDateTagInContent(
+	content: string,
+	rawText: string,
+	replacement: string,
+	sectionInfo: MarkdownSectionInformation | null,
+	occurrenceIndex: number
+): string {
+	if (sectionInfo) {
+		const sectionStart = getLineStartOffset(content, sectionInfo.lineStart);
+		const sectionEnd = sectionInfo.lineEnd + 1 > sectionInfo.lineStart
+			? getLineStartOffset(content, sectionInfo.lineEnd + 1)
+			: content.length;
+		const sectionText = content.slice(sectionStart, sectionEnd);
+		const updatedSection = replaceNthOccurrence(sectionText, rawText, replacement, occurrenceIndex);
+
+		if (updatedSection !== null) {
+			return content.slice(0, sectionStart) + updatedSection + content.slice(sectionEnd);
+		}
+	}
+
+	return replaceNthOccurrence(content, rawText, replacement, 0) ?? content;
 }
 
 /**
@@ -1081,7 +1155,8 @@ function createNotionDateExtension(
 			return buildDecorations(state, getSettings(), onWidgetClick);
 		},
 		update(decorations: DecorationSet, transaction: Transaction): DecorationSet {
-			if (transaction.docChanged || transaction.selection) {
+			const shouldRefresh = transaction.effects.some((effect) => effect.is(refreshDateDecorationsEffect));
+			if (transaction.docChanged || transaction.selection || shouldRefresh) {
 				return buildDecorations(transaction.state, getSettings(), onWidgetClick);
 			}
 			return decorations.map(transaction.changes);
@@ -1133,6 +1208,7 @@ export default class NotionDatePlugin extends Plugin {
 		this.registerMarkdownPostProcessor((element, context) => {
 			const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
 			const nodesToReplace: { node: Text; parent: Node; newNodes: Node[] }[] = [];
+			const occurrenceCounts = new Map<string, number>();
 
 			let textNode: Text | null;
 			const regex = new RegExp(DATE_REGEX);
@@ -1147,6 +1223,9 @@ export default class NotionDatePlugin extends Plugin {
 					let lastIdx = 0;
 					let match;
 					const newNodes: Node[] = [];
+					const sectionInfo = textNode.parentElement instanceof HTMLElement
+						? context.getSectionInfo(textNode.parentElement)
+						: null;
 
 					while ((match = regex.exec(text)) !== null) {
 						const parsedTag = parseDateTagContent(match[1], this.settings);
@@ -1163,6 +1242,9 @@ export default class NotionDatePlugin extends Plugin {
 						const dateStr = parsedTag.dateStr;
 						const timeStr = parsedTag.timeStr;
 						const rawText = match[0];
+						const occurrenceKey = `${sectionInfo?.lineStart ?? -1}:${sectionInfo?.lineEnd ?? -1}:${rawText}`;
+						const occurrenceIndex = occurrenceCounts.get(occurrenceKey) ?? 0;
+						occurrenceCounts.set(occurrenceKey, occurrenceIndex + 1);
 
 						// Create styled HTML span pill
 						const span = document.createElement("span");
@@ -1187,22 +1269,16 @@ export default class NotionDatePlugin extends Plugin {
 							evt.preventDefault();
 							evt.stopPropagation();
 
-								const innerVal = rawText.slice(2, -1);
-								const parsedInnerVal = parseDateTagContent(innerVal, this.settings);
-								const modalInitialVal = parsedInnerVal
-									? `${parsedInnerVal.dateStr}${parsedInnerVal.timeStr ? " " + parsedInnerVal.timeStr : ""}`
-									: innerVal;
-								new CustomDatePickerModal(this.app, (newVal) => {
-									const activeFile = this.app.workspace.getActiveFile();
-									if (activeFile) {
-										this.app.vault.read(activeFile).then((fileContent) => {
-											// Replace target raw text tag in file contents
-											const updatedContent = fileContent.replace(rawText, `@[${formatMarkdownDateTagFromValue(newVal, this.settings)}]`);
-											this.app.vault.modify(activeFile, updatedContent);
-										});
-									}
-								}, modalInitialVal).open();
-							});
+							const innerVal = rawText.slice(2, -1);
+							const parsedInnerVal = parseDateTagContent(innerVal, this.settings);
+							const modalInitialVal = parsedInnerVal
+								? `${parsedInnerVal.dateStr}${parsedInnerVal.timeStr ? " " + parsedInnerVal.timeStr : ""}`
+								: innerVal;
+							new CustomDatePickerModal(this.app, (newVal) => {
+								const replacement = `@[${formatMarkdownDateTagFromValue(newVal, this.settings)}]`;
+								this.replaceDateInReadingView(context.sourcePath, rawText, replacement, sectionInfo, occurrenceIndex);
+							}, modalInitialVal).open();
+						});
 
 						newNodes.push(span);
 						lastIdx = matchEnd;
@@ -1238,6 +1314,21 @@ export default class NotionDatePlugin extends Plugin {
 
 	onunload() {
 		console.log("Unloading Obsidian Notion Dates plugin...");
+	}
+
+	private replaceDateInReadingView(
+		sourcePath: string,
+		rawText: string,
+		replacement: string,
+		sectionInfo: MarkdownSectionInformation | null,
+		occurrenceIndex: number
+	) {
+		const file = this.app.vault.getAbstractFileByPath(sourcePath);
+		if (!(file instanceof TFile)) return;
+
+		this.app.vault.process(file, (content) => {
+			return replaceDateTagInContent(content, rawText, replacement, sectionInfo, occurrenceIndex);
+		}).catch((error) => console.error("Failed to update Notion date tag:", error));
 	}
 
 	async loadSettings() {
@@ -1289,7 +1380,7 @@ export default class NotionDatePlugin extends Plugin {
 			if (leaf.view instanceof MarkdownView) {
 				const cm = (leaf.view.editor as unknown as { cm?: EditorView }).cm;
 				if (cm) {
-					cm.dispatch({ selection: cm.state.selection });
+					cm.dispatch({ effects: refreshDateDecorationsEffect.of() });
 				}
 
 				const previewMode = (leaf.view as unknown as { previewMode?: { rerender: (force?: boolean) => void } }).previewMode;
