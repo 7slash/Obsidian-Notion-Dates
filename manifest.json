@@ -3,7 +3,7 @@
 	"name": "Notion Dates",
 	"version": "1.1.1",
 	"minAppVersion": "1.1.0",
-	"description": "Notion-style dynamic date pills in Obsidian with smart date insertion and configurable date formats.",
+	"description": "Notion-style dynamic date pills with smart date insertion and configurable date formats.",
 	"author": "7slash",
 	"authorUrl": "https://github.com/7slash",
 	"isDesktopOnly": false

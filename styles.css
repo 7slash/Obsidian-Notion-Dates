@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Obsidian Notion Dates Stylesheet
+   Notion Dates Stylesheet
    ========================================================================== */
 
 /* Core Pill styling for both Live Preview and Reading View */
@@ -14,7 +14,7 @@
 	cursor: pointer;
 	line-height: 1.2;
 	user-select: none;
-	text-decoration: none !important;
+	text-decoration: none;
 	border: 1px solid transparent;
 	transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
@@ -87,7 +87,7 @@
 
 /* Autocomplete Suggestion List styling */
 .notion-date-suggestion-container {
-	transition: none !important;
+	transition: none;
 }
 
 .notion-date-suggestion-container.notion-date-suggestion-positioning {
