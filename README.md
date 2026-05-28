@@ -117,7 +117,7 @@ For local installation:
 2. Copy `main.js`, `manifest.json`, and `styles.css` into:
 
 ```text
-<your vault>/.obsidian/plugins/obsidian-notion-dates/
+<your vault>/.obsidian/plugins/notion-dates/
 ```
 
 3. Reload Obsidian.
@@ -146,7 +146,7 @@ npm run dev
 To auto-copy builds into a vault plugin folder, set:
 
 ```sh
-OBSIDIAN_VAULT_PLUGIN_PATH="/path/to/vault/.obsidian/plugins/obsidian-notion-dates" npm run dev
+OBSIDIAN_VAULT_PLUGIN_PATH="/path/to/vault/.obsidian/plugins/notion-dates" npm run dev
 ```
 
 ## Privacy and Security
