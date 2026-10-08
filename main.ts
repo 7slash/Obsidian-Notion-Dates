@@ -11,7 +11,9 @@ import {
 	EditorSuggestTriggerInfo,
 	EditorPosition,
 	TFile,
-	MarkdownSectionInformation
+	MarkdownSectionInformation,
+	ToggleComponent,
+	setIcon
 } from 'obsidian';
 
 import {
@@ -97,6 +99,8 @@ const FULL_MONTH_NAMES = [
 	"november",
 	"december"
 ];
+
+const MONTH_LABELS = FULL_MONTH_NAMES.map((month) => month[0].toUpperCase() + month.slice(1));
 
 const WEEKDAY_INDEX: Record<string, number> = WEEKDAYS.reduce((acc, weekday, index) => {
 	acc[weekday.toLowerCase()] = index;
@@ -734,130 +738,327 @@ function replaceDateTagInContent(
 	return replaceNthOccurrence(content, rawText, replacement, 0) ?? content;
 }
 
-/**
- * Custom Date and Time Picker Modal using standard HTML5 inputs.
- */
+/** A theme-aware calendar with local dates and optional, inline time entry. */
 export class CustomDatePickerModal extends Modal {
-	onSubmit: (dateVal: string) => void;
-	initialDate: string;
-	initialTime: string;
-	hasTime: boolean;
+	private static nextId = 0;
+	private readonly id = `notion-date-picker-${++CustomDatePickerModal.nextId}`;
+	private selectedDate: Date;
+	private focusedDate: Date;
+	private visibleMonth: Date;
+	private hasTime: boolean;
+	private initialTime: string;
+	private dateInput!: HTMLInputElement;
+	private hourInput!: HTMLInputElement;
+	private minuteInput!: HTMLInputElement;
+	private meridiemInput!: HTMLSelectElement;
+	private timeToggle!: ToggleComponent;
+	private timeControls!: HTMLElement;
+	private monthLabel!: HTMLElement;
+	private calendarBody!: HTMLTableSectionElement;
+	private errorEl!: HTMLElement;
+	private saveButton!: HTMLButtonElement;
 
-	constructor(app: App, onSubmit: (dateVal: string) => void, initialVal?: string) {
+	constructor(
+		app: App,
+		private readonly onSubmit: (dateVal: string) => void,
+		private readonly initialVal?: string,
+		private readonly settings: NotionDatePluginSettings = DEFAULT_SETTINGS
+	) {
 		super(app);
-		this.onSubmit = onSubmit;
-
-		this.initialDate = "";
-		this.initialTime = "";
-		this.hasTime = false;
-
-		if (initialVal) {
-			const parsed = parseDateTagContent(initialVal);
-			if (parsed) {
-				this.initialDate = parsed.dateStr;
-				if (parsed.timeStr) {
-					this.initialTime = parsed.timeStr;
-					this.hasTime = true;
-				}
-			}
-		}
-
-		if (!this.initialDate) {
-			const now = new Date();
-			const year = now.getFullYear();
-			const month = String(now.getMonth() + 1).padStart(2, "0");
-			const day = String(now.getDate()).padStart(2, "0");
-			this.initialDate = `${year}-${month}-${day}`;
-
-			const hours = String(now.getHours()).padStart(2, "0");
-			const minutes = String(now.getMinutes()).padStart(2, "0");
-			this.initialTime = `${hours}:${minutes}`;
-		}
+		const parsed = initialVal ? parseDateTagContent(initialVal) : null;
+		this.selectedDate = parsed ? parseLocalDate(parsed.dateStr) : startOfToday();
+		this.focusedDate = new Date(this.selectedDate);
+		this.visibleMonth = new Date(this.selectedDate.getFullYear(), this.selectedDate.getMonth(), 1);
+		this.hasTime = !!parsed?.timeStr;
+		const now = new Date();
+		this.initialTime = parsed?.timeStr ?? `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 	}
 
 	onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
-
-		contentEl.createEl("h2", { text: "Choose Date and Time", cls: "notion-date-modal-title" });
-
-		const flexContainer = contentEl.createEl("div", { cls: "notion-date-modal-container" });
-
-		// Initialize Inputs immediately so they can be referenced by event listeners
-		const dateInput = document.createElement("input");
-		dateInput.type = "date";
-		dateInput.value = this.initialDate;
-
-		const timeInput = document.createElement("input");
-		timeInput.type = "time";
-		timeInput.value = this.initialTime;
-
-		// Focus and click listeners to auto-trigger the picker dropdown
-		const triggerPicker = (inputEl: HTMLInputElement) => {
-			try {
-				inputEl.showPicker();
-			} catch (e) {}
-		};
-
-		dateInput.addEventListener("click", () => triggerPicker(dateInput));
-		dateInput.addEventListener("focus", () => triggerPicker(dateInput));
-
-		timeInput.addEventListener("click", () => triggerPicker(timeInput));
-		timeInput.addEventListener("focus", () => triggerPicker(timeInput));
-
-		// Date Input Row
-		const dateRow = flexContainer.createEl("div", { cls: "notion-date-modal-row" });
-		dateRow.createEl("label", { text: "Date:" });
-		dateRow.appendChild(dateInput);
-
-		// Include Time Toggle
-		const timeToggleRow = flexContainer.createEl("div", { cls: "notion-date-modal-row checkbox-row" });
-		const timeCheckboxLabel = timeToggleRow.createEl("label");
-		const timeCheckbox = timeCheckboxLabel.createEl("input", { type: "checkbox" });
-		timeCheckbox.checked = this.hasTime;
-		timeCheckboxLabel.appendChild(document.createTextNode(" Include time"));
-
-		// Time Input Container
-		const timeRow = flexContainer.createEl("div", { cls: "notion-date-modal-row" });
-		timeRow.createEl("label", { text: "Time:" });
-		timeRow.appendChild(timeInput);
-
-		// Toggle time input visibility
-		const toggleTimeVisibility = () => {
-			if (timeCheckbox.checked) {
-				timeRow.style.display = "flex";
-			} else {
-				timeRow.style.display = "none";
-			}
-		};
-		timeCheckbox.addEventListener("change", toggleTimeVisibility);
-		toggleTimeVisibility();
-
-		// Buttons
-		const buttonRow = contentEl.createEl("div", { cls: "notion-date-modal-buttons" });
-
-		const cancelButton = buttonRow.createEl("button", { text: "Cancel", cls: "mod-cancel" });
-		cancelButton.addEventListener("click", () => this.close());
-
-		const submitButton = buttonRow.createEl("button", { text: "Confirm", cls: "mod-cta" });
-		submitButton.addEventListener("click", () => {
-			const finalDate = dateInput.value;
-			if (!finalDate) return;
-
-			let result = finalDate;
-			if (timeCheckbox.checked && timeInput.value) {
-				result += " " + timeInput.value;
-			}
-
-			this.onSubmit(result);
-			this.close();
+		this.modalEl.addClass("notion-date-picker");
+		this.setTitle(this.initialVal ? "Edit date" : "Choose date");
+		const form = contentEl.createEl("form", { cls: "notion-date-picker-form" });
+		form.noValidate = true;
+		form.addEventListener("submit", (event) => {
+			event.preventDefault();
+			this.submit();
 		});
 
-		// Auto-focus date input on modal open to trigger the picker immediately
-		setTimeout(() => {
-			dateInput.focus();
-			triggerPicker(dateInput);
-		}, 150);
+		const inputWrap = form.createDiv({ cls: "notion-date-input-wrap" });
+		setIcon(inputWrap.createSpan({ cls: "notion-date-input-icon" }), "calendar");
+		this.dateInput = inputWrap.createEl("input", { type: "text", cls: "notion-date-input" });
+		this.dateInput.setAttribute("aria-label", "Date");
+		this.dateInput.setAttribute("aria-describedby", `${this.id}-hint ${this.id}-error`);
+		this.dateInput.autocomplete = "off";
+		this.dateInput.spellcheck = false;
+		this.dateInput.value = this.dateLabel(this.selectedDate);
+		this.dateInput.addEventListener("focus", () => this.dateInput.select());
+		this.dateInput.addEventListener("input", () => this.readDateInput());
+		this.dateInput.addEventListener("change", () => {
+			if (parseSmartDate(this.dateInput.value)) this.dateInput.value = this.dateLabel(this.selectedDate);
+			this.updateValidity();
+		});
+		form.createDiv({
+			cls: "notion-date-input-hint",
+			text: "Try “tomorrow” or “May 29”",
+			attr: { id: `${this.id}-hint` }
+		});
+
+		const shortcuts = form.createDiv({ cls: "notion-date-shortcuts" });
+		for (const [label, offset] of [["Today", 0], ["Tomorrow", 1], ["In a week", 7]] as const) {
+			const button = shortcuts.createEl("button", { text: label, attr: { type: "button" } });
+			button.addEventListener("click", () => this.selectDate(addDays(startOfToday(), offset)));
+		}
+
+		const calendar = form.createDiv({ cls: "notion-date-calendar" });
+		const header = calendar.createDiv({ cls: "notion-date-calendar-header" });
+		this.monthLabel = header.createDiv({ attr: { id: `${this.id}-month`, "aria-live": "polite" } });
+		const navigation = header.createDiv({ cls: "notion-date-calendar-navigation" });
+		for (const [label, icon, offset] of [["Previous month", "chevron-left", -1], ["Next month", "chevron-right", 1]] as const) {
+			const button = navigation.createEl("button", { attr: { type: "button", "aria-label": label } });
+			setIcon(button, icon);
+			button.addEventListener("click", () => {
+				this.focusedDate = this.shiftMonth(this.focusedDate, offset);
+				this.visibleMonth = new Date(this.focusedDate.getFullYear(), this.focusedDate.getMonth(), 1);
+				this.renderCalendar();
+			});
+		}
+		const table = calendar.createEl("table", { attr: { role: "grid", "aria-labelledby": `${this.id}-month`, "aria-describedby": `${this.id}-keys` } });
+		const headings = table.createEl("thead").createEl("tr");
+		const firstDay = this.settings.weekStartsOn === "monday" ? 1 : 0;
+		for (let column = 0; column < 7; column++) {
+			const weekday = WEEKDAYS[(firstDay + column) % 7];
+			headings.createEl("th", { text: weekday.slice(0, 2), attr: { scope: "col", abbr: weekday } });
+		}
+		this.calendarBody = table.createEl("tbody");
+		calendar.createDiv({
+			cls: "notion-date-visually-hidden",
+			text: "Use arrow keys to move between days, Home and End to move within a week, and Page Up or Page Down to change months. Press Enter or Space to select a date.",
+			attr: { id: `${this.id}-keys` }
+		});
+
+		const timeSection = form.createDiv({ cls: "notion-date-time-section" });
+		const timeHeading = timeSection.createDiv({ cls: "notion-date-time-heading" });
+		timeHeading.createSpan({ text: "Include time" });
+		this.timeToggle = new ToggleComponent(timeHeading).setValue(this.hasTime).onChange((enabled) => {
+			this.setTimeEnabled(enabled);
+			if (enabled) {
+				this.hourInput.focus();
+				this.hourInput.select();
+			}
+		});
+		this.timeToggle.toggleEl.setAttribute("aria-label", "Include time");
+		this.timeToggle.toggleEl.setAttribute("aria-controls", `${this.id}-time`);
+		this.timeControls = timeSection.createDiv({ cls: "notion-date-time-controls", attr: { id: `${this.id}-time` } });
+		const timeGroup = this.timeControls.createDiv({ cls: "notion-date-time-group", attr: { role: "group", "aria-label": "Time" } });
+		const segments = timeGroup.createDiv({ cls: "notion-date-time-segments" });
+		this.hourInput = this.createTimeInput(segments, "Hour", this.settings.timeFormat === "12-hour" ? 1 : 0, this.settings.timeFormat === "12-hour" ? 12 : 23);
+		segments.createSpan({ text: ":", attr: { "aria-hidden": "true" } });
+		this.minuteInput = this.createTimeInput(segments, "Minute", 0, 59);
+		this.meridiemInput = timeGroup.createEl("select", { attr: { "aria-label": "AM or PM" } });
+		for (const value of ["AM", "PM"]) this.meridiemInput.createEl("option", { text: value, value });
+		this.meridiemInput.hidden = this.settings.timeFormat === "24-hour";
+		this.meridiemInput.addEventListener("change", () => this.updateValidity());
+		const nowButton = this.timeControls.createEl("button", { text: "Now", attr: { type: "button" }, cls: "notion-date-time-now" });
+		nowButton.addEventListener("click", () => {
+			const now = new Date();
+			this.setTime(`${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
+			this.updateValidity();
+		});
+		this.setTime(this.initialTime);
+		this.setTimeEnabled(this.hasTime);
+
+		this.errorEl = form.createDiv({ cls: "notion-date-picker-error", attr: { id: `${this.id}-error`, "aria-live": "polite" } });
+		this.errorEl.hidden = true;
+		const buttons = form.createDiv({ cls: "notion-date-picker-buttons" });
+		buttons.createEl("button", { text: "Cancel", attr: { type: "button" } }).addEventListener("click", () => this.close());
+		this.saveButton = buttons.createEl("button", { text: "Save", attr: { type: "submit" }, cls: "mod-cta" });
+		this.renderCalendar();
+		this.updateValidity();
+		this.focusedDayButton()?.focus();
+	}
+
+	private dateLabel(date: Date): string {
+		// Use the parser's unambiguous month-name format, independently of the OS locale.
+		return `${MONTH_LABELS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+	}
+
+	private selectDate(date: Date) {
+		this.selectedDate = new Date(date);
+		this.focusedDate = new Date(date);
+		this.visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+		this.dateInput.value = this.dateLabel(date);
+		this.renderCalendar();
+		this.updateValidity();
+	}
+
+	private readDateInput(): boolean {
+		const parsed = parseSmartDate(this.dateInput.value);
+		if (parsed) {
+			this.selectedDate = parsed.date;
+			this.focusedDate = new Date(parsed.date);
+			this.visibleMonth = new Date(parsed.date.getFullYear(), parsed.date.getMonth(), 1);
+			if (parsed.timeStr) {
+				this.setTime(parsed.timeStr);
+				this.setTimeEnabled(true);
+			}
+			this.renderCalendar();
+		}
+		this.updateValidity();
+		return !!parsed;
+	}
+
+	private shiftMonth(date: Date, amount: number): Date {
+		const month = new Date(date.getFullYear(), date.getMonth() + amount, 1);
+		const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+		month.setDate(Math.min(date.getDate(), lastDay));
+		return month;
+	}
+
+	private renderCalendar(focus = false) {
+		this.monthLabel.setText(`${MONTH_LABELS[this.visibleMonth.getMonth()]} ${this.visibleMonth.getFullYear()}`);
+		this.calendarBody.empty();
+		const start = getWeekStart(this.visibleMonth, this.settings.weekStartsOn);
+		const selectedKey = formatDateValue(this.selectedDate);
+		const focusedKey = formatDateValue(this.focusedDate);
+		const todayKey = getLocalDateKey();
+		for (let week = 0; week < 6; week++) {
+			const row = this.calendarBody.createEl("tr");
+			for (let column = 0; column < 7; column++) {
+				const date = addDays(start, week * 7 + column);
+				const key = formatDateValue(date);
+				const cell = row.createEl("td", { attr: { "aria-selected": String(key === selectedKey) } });
+				const button = cell.createEl("button", {
+					text: String(date.getDate()), cls: "notion-date-calendar-day",
+					attr: { type: "button", "data-date": key, "aria-label": `${WEEKDAYS[date.getDay()]}, ${this.dateLabel(date)}`, tabindex: key === focusedKey ? "0" : "-1" }
+				});
+				button.toggleClass("is-outside-month", date.getMonth() !== this.visibleMonth.getMonth());
+				button.toggleClass("is-selected", key === selectedKey);
+				if (key === todayKey) button.setAttribute("aria-current", "date");
+				button.addEventListener("focus", () => {
+					this.focusedDate = new Date(date);
+					for (const day of Array.from(this.calendarBody.querySelectorAll<HTMLButtonElement>("button"))) day.tabIndex = day === button ? 0 : -1;
+				});
+				button.addEventListener("click", () => {
+					this.selectDate(date);
+					this.focusedDayButton()?.focus();
+				});
+				button.addEventListener("keydown", (event) => this.onCalendarKey(event, date));
+			}
+		}
+		if (focus) this.focusedDayButton()?.focus();
+	}
+
+	private focusedDayButton(): HTMLButtonElement | null {
+		return this.calendarBody.querySelector(`button[data-date="${formatDateValue(this.focusedDate)}"]`);
+	}
+
+	private onCalendarKey(event: KeyboardEvent, date: Date) {
+		if (event.altKey || event.ctrlKey || event.metaKey) return;
+		let next: Date;
+		switch (event.key) {
+			case "ArrowLeft": next = addDays(date, -1); break;
+			case "ArrowRight": next = addDays(date, 1); break;
+			case "ArrowUp": next = addDays(date, -7); break;
+			case "ArrowDown": next = addDays(date, 7); break;
+			case "Home": next = getWeekStart(date, this.settings.weekStartsOn); break;
+			case "End": next = addDays(getWeekStart(date, this.settings.weekStartsOn), 6); break;
+			case "PageUp": next = this.shiftMonth(date, event.shiftKey ? -12 : -1); break;
+			case "PageDown": next = this.shiftMonth(date, event.shiftKey ? 12 : 1); break;
+			default: return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.focusedDate = next;
+		this.visibleMonth = new Date(next.getFullYear(), next.getMonth(), 1);
+		this.renderCalendar(true);
+	}
+
+	private createTimeInput(parent: HTMLElement, label: string, min: number, max: number): HTMLInputElement {
+		const input = parent.createEl("input", { type: "text", attr: { "aria-label": label, "aria-describedby": `${this.id}-error` } });
+		input.inputMode = "numeric";
+		input.maxLength = 2;
+		input.autocomplete = "off";
+		input.addEventListener("focus", () => input.select());
+		input.addEventListener("input", () => this.updateValidity());
+		input.addEventListener("change", () => {
+			if (/^\d{1,2}$/.test(input.value) && Number(input.value) >= min && Number(input.value) <= max) {
+				input.value = input.value.padStart(2, "0");
+			}
+			this.updateValidity();
+		});
+		input.addEventListener("keydown", (event) => {
+			if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+			event.preventDefault();
+			const current = /^\d{1,2}$/.test(input.value) ? Number(input.value) : min;
+			const next = current + (event.key === "ArrowUp" ? 1 : -1);
+			input.value = String(next > max ? min : next < min ? max : next).padStart(2, "0");
+			this.updateValidity();
+		});
+		return input;
+	}
+
+	private setTime(value: string) {
+		const [hours, minutes] = value.split(":").map(Number);
+		this.hourInput.value = String(this.settings.timeFormat === "12-hour" ? hours % 12 || 12 : hours).padStart(2, "0");
+		this.minuteInput.value = String(minutes).padStart(2, "0");
+		this.meridiemInput.value = hours >= 12 ? "PM" : "AM";
+	}
+
+	private setTimeEnabled(enabled: boolean) {
+		this.hasTime = enabled;
+		this.timeToggle.setValue(enabled);
+		this.timeControls.hidden = !enabled;
+		this.hourInput.disabled = !enabled;
+		this.minuteInput.disabled = !enabled;
+		this.meridiemInput.disabled = !enabled;
+		if (this.saveButton) this.updateValidity();
+	}
+
+	private getTime(): string | null {
+		if (!/^\d{1,2}$/.test(this.hourInput.value) || !/^\d{1,2}$/.test(this.minuteInput.value)) return null;
+		return parseTimeToken(`${this.hourInput.value}:${this.minuteInput.value.padStart(2, "0")}${this.settings.timeFormat === "12-hour" ? this.meridiemInput.value : ""}`);
+	}
+
+	private updateValidity() {
+		if (!this.saveButton) return;
+		const dateValid = !!parseSmartDate(this.dateInput.value);
+		const timeValid = !this.hasTime || this.getTime() !== null;
+		this.dateInput.setAttribute("aria-invalid", String(!dateValid));
+		this.hourInput.setAttribute("aria-invalid", String(!timeValid));
+		this.minuteInput.setAttribute("aria-invalid", String(!timeValid));
+		this.saveButton.disabled = !dateValid || !timeValid;
+		if (!dateValid) this.showError("Enter a valid date, like “tomorrow”.");
+		else if (!timeValid) this.showError(this.settings.timeFormat === "12-hour"
+			? "Use hours 1–12 and minutes 00–59."
+			: "Use hours 00–23 and minutes 00–59.");
+		else {
+			this.errorEl.setText("");
+			this.errorEl.hidden = true;
+		}
+	}
+
+	private showError(message: string) {
+		this.errorEl.setText(message);
+		this.errorEl.hidden = false;
+	}
+
+	private submit() {
+		if (!this.readDateInput()) {
+			this.showError("Enter a valid date before saving.");
+			this.dateInput.focus();
+			return;
+		}
+		const time = this.hasTime ? this.getTime() : null;
+		if (this.hasTime && !time) {
+			this.showError("Enter a valid time before saving.");
+			this.hourInput.focus();
+			return;
+		}
+		this.onSubmit(`${formatDateValue(this.selectedDate)}${time ? ` ${time}` : ""}`);
+		this.close();
 	}
 
 	onClose() {
@@ -1087,7 +1288,7 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 				const insertedText = `@[${formatMarkdownDateTagFromValue(dateVal, this.plugin.settings)}]`;
 				editor.replaceRange(insertedText, start);
 				editor.setCursor({ line: start.line, ch: start.ch + insertedText.length });
-			}).open();
+			}, undefined, this.plugin.settings).open();
 		} else {
 			const insertedText = `@[${formatMarkdownDateTagFromValue(suggestion.value, this.plugin.settings)}]`;
 			editor.replaceRange(insertedText, start);
@@ -1274,7 +1475,7 @@ export default class NotionDatePlugin extends Plugin {
 				const startPos = editor.offsetToPos(from);
 				const endPos = editor.offsetToPos(to);
 				editor.replaceRange(`@[${formatMarkdownDateTagFromValue(newVal, this.settings)}]`, startPos, endPos);
-			}, modalInitialVal).open();
+			}, modalInitialVal, this.settings).open();
 		};
 
 		this.registerEditorExtension([createNotionDateExtension(this.app, () => this.settings, onWidgetClick)]);
@@ -1352,7 +1553,7 @@ export default class NotionDatePlugin extends Plugin {
 							new CustomDatePickerModal(this.app, (newVal) => {
 								const replacement = `@[${formatMarkdownDateTagFromValue(newVal, this.settings)}]`;
 								this.replaceDateInReadingView(context.sourcePath, rawText, replacement, sectionInfo, occurrenceIndex);
-							}, modalInitialVal).open();
+							}, modalInitialVal, this.settings).open();
 						});
 
 						newNodes.push(span);
