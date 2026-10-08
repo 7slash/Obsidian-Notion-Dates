@@ -461,10 +461,18 @@ function parseSmartDate(input: string, baseDate = new Date()): ParsedSmartDate |
 	const today = new Date(baseDate);
 	today.setHours(0, 0, 0, 0);
 
-	if (text === "now") {
-		const hours = String(baseDate.getHours()).padStart(2, "0");
-		const minutes = String(baseDate.getMinutes()).padStart(2, "0");
-		return { date: today, timeStr: `${hours}:${minutes}` };
+	const nowMatch = text.match(/^now(?:([+-]?\d+))?$/);
+	if (nowMatch) {
+		const offsetMinutes = Number(nowMatch[1] ?? 0);
+		if (!Number.isSafeInteger(offsetMinutes)) return null;
+
+		// Add elapsed minutes so offsets also work across midnight and clock changes.
+		const date = new Date(baseDate.getTime() + offsetMinutes * 60_000);
+		if (Number.isNaN(date.getTime())) return null;
+		const hours = String(date.getHours()).padStart(2, "0");
+		const minutes = String(date.getMinutes()).padStart(2, "0");
+		date.setHours(0, 0, 0, 0);
+		return { date, timeStr: `${hours}:${minutes}` };
 	}
 
 	if (text === "today") return { date: today, timeStr };
@@ -1094,7 +1102,7 @@ class NotionDateSuggest extends EditorSuggest<NotionDateSuggestion> {
 		const sub = line.substring(0, cursor.ch);
 
 		// Match "@" followed by a short natural-language date query.
-		const match = sub.match(/(?:^|\s)@([A-Za-z0-9,./\-\s]*)$/);
+		const match = sub.match(/(?:^|\s)@([A-Za-z0-9,./+\-\s]*)$/);
 		if (!match) return null;
 
 		const triggerCharIndex = sub.length - match[1].length - 1;
